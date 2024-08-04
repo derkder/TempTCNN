@@ -280,6 +280,7 @@ target_link_libraries(tiny-cuda-nn PUBLIC ${CUDA_LIBRARIES} ${TCNN_LIBRARIES} fm
 
 if (TCNN_BUILD_EXAMPLES)
 	add_subdirectory("samples")
+        add_subdirectory("train_radiosity")
 endif()
 if (TCNN_BUILD_BENCHMARK)
 	add_subdirectory("benchmarks/image")
