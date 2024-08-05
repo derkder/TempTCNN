@@ -13,10 +13,8 @@ using namespace tcnn;
 using precision_t = network_precision_t;
 
 struct TrainingMetadata {
-	GPUMemory<float> posW;
-	GPUMemory<float> normalW;
-	GPUMemory<float> wiW;
-	GPUMemory<float> diff;
+	GPUMemory<float> hitPosW;
+	GPUMemory<float> rayDirW;
 	GPUMemory<float> color;
 
 	ivec2 resolution = ivec2(0);
@@ -24,19 +22,15 @@ struct TrainingMetadata {
 	TrainingMetadata(const uint32_t width, const uint32_t height) {
 		resolution.x = width;
 		resolution.y = height;
-		posW.resize(width * height * 4 * 4);	// 4 channels * 4 bytes
-		normalW.resize(width * height * 4 * 4);
-		wiW.resize(width * height * 4 * 4);
-		diff.resize(width * height * 4 * 4);
+		hitPosW.resize(width * height * 4 * 4);	// 4 channels * 4 bytes
+		rayDirW.resize(width * height * 4 * 4);
 		color.resize(width * height * 4 * 4);
 	}
 };
 
 struct TrainingTexture {
-	cudaTextureObject_t posW;
-	cudaTextureObject_t normalW;
-	cudaTextureObject_t wiW;
-	cudaTextureObject_t diff;
+	cudaTextureObject_t hitPosW;
+	cudaTextureObject_t rayDirW;
 	cudaTextureObject_t color;
 };
 
@@ -77,17 +71,11 @@ TrainingMetadata load_metadata(filesystem::path& folder_path) {
 		size_t thirdLastDot = path.str().rfind('.', secondLastDot - 1);
 		std::string buffer_name = path.str().substr(thirdLastDot + 1, secondLastDot - thirdLastDot - 1);
 
-		if (buffer_name == "posW") {
+		if (buffer_name == "probePoses") {
 			cudaMemcpy(result.posW.data(), load_image(path, width, height).data(), img_size, cudaMemcpyDeviceToDevice);
 		}
-		if (buffer_name == "normalW") {
+		if (buffer_name == "rayDirs") {
 			cudaMemcpy(result.normalW.data(), load_image(path, width, height).data(), img_size, cudaMemcpyDeviceToDevice);
-		}
-		if (buffer_name == "wiW") {
-			cudaMemcpy(result.wiW.data(), load_image(path, width, height).data(), img_size, cudaMemcpyDeviceToDevice);
-		}
-		if (buffer_name == "diff") {
-			cudaMemcpy(result.diff.data(), load_image(path, width, height).data(), img_size, cudaMemcpyDeviceToDevice);
 		}
 		if (buffer_name == "color") {
 			cudaMemcpy(result.color.data(), load_image(path, width, height).data(), img_size, cudaMemcpyDeviceToDevice);
@@ -119,20 +107,16 @@ void create_cuda_texture(GPUMemory<float>& image, uint32_t width, uint32_t heigh
 
 TrainingTexture create_training_texture(TrainingMetadata& metadata) {
 	TrainingTexture result;
-	create_cuda_texture(metadata.posW, metadata.resolution.x, metadata.resolution.y, result.posW);
-	create_cuda_texture(metadata.normalW, metadata.resolution.x, metadata.resolution.y, result.normalW);
-	create_cuda_texture(metadata.wiW, metadata.resolution.x, metadata.resolution.y, result.wiW);
-	create_cuda_texture(metadata.diff, metadata.resolution.x, metadata.resolution.y, result.diff);
+	create_cuda_texture(metadata.hitPosW, metadata.resolution.x, metadata.resolution.y, result.hitPosW);
+	create_cuda_texture(metadata.rayDirW, metadata.resolution.x, metadata.resolution.y, result.rayDirW);
 	create_cuda_texture(metadata.color, metadata.resolution.x, metadata.resolution.y, result.color);
 
 	return result;
 }
 
 void destroyTexture(TrainingTexture texture) {
-	cudaDestroyTextureObject(texture.posW);
-	cudaDestroyTextureObject(texture.normalW);
-	cudaDestroyTextureObject(texture.wiW);
-	cudaDestroyTextureObject(texture.diff);
+	cudaDestroyTextureObject(texture.hitPosW);
+	cudaDestroyTextureObject(texture.rayDirW);
 	cudaDestroyTextureObject(texture.color);
 }
 
@@ -146,14 +130,12 @@ __global__ void sample_input_output(uint32_t n_elements, TrainingTexture texture
 	uint32_t input_offset = i * input_stride;
 	uint32_t output_offset = i * output_stride;
 
-	float4 posW_val 	= tex2D<float4>(texture.posW, xs_and_ys[texture_offset + 0], xs_and_ys[texture_offset + 1]);
-	float4 normalW_val 	= tex2D<float4>(texture.normalW, xs_and_ys[texture_offset + 0], xs_and_ys[texture_offset + 1]);
-	float4 wiW_val 		= tex2D<float4>(texture.wiW, xs_and_ys[texture_offset + 0], xs_and_ys[texture_offset + 1]);
-	float4 diff_val 	= tex2D<float4>(texture.diff, xs_and_ys[texture_offset + 0], xs_and_ys[texture_offset + 1]);
-	float4 color_val 	= tex2D<float4>(texture.diff, xs_and_ys[texture_offset + 0], xs_and_ys[texture_offset + 1]);
+	float4 hitposW_val 	= tex2D<float4>(texture.hitPosW, xs_and_ys[texture_offset + 0], xs_and_ys[texture_offset + 1]);
+	float4 raydirW_val 	= tex2D<float4>(texture.rayDirW, xs_and_ys[texture_offset + 0], xs_and_ys[texture_offset + 1]);
+	float4 color_val 	= tex2D<float4>(texture.color, xs_and_ys[texture_offset + 0], xs_and_ys[texture_offset + 1]);
 
-	input[input_offset + 0] = posW_val.x;		input[input_offset + 1] = posW_val.y;		input[input_offset + 2] = posW_val.z;
-	// input[input_offset + 3] = normalW_val.x;	input[input_offset + 4] = normalW_val.y;	input[input_offset + 5] = normalW_val.z;
+	input[input_offset + 0] = hitposW_val.x;	input[input_offset + 1] = hitposW_val.y;	input[input_offset + 2] = hitposW_val.z;
+	input[input_offset + 3] = raydirW_val.x;	input[input_offset + 4] = raydirW_val.y;	input[input_offset + 5] = raydirW_val.z;
 	// input[input_offset + 6] = wiW_val.x;		input[input_offset + 7] = wiW_val.y;		input[input_offset + 8] = wiW_val.z;
 	// input[input_offset + 9] = diff_val.x;		input[input_offset + 10] = diff_val.y;		input[input_offset + 11] = diff_val.z;
 
@@ -195,10 +177,11 @@ int main(int argc, char* argv[]) {
 		json config = json::parse(f, nullptr, true, true);
 
 		const uint32_t n_training_steps = 5000;
-		const uint32_t n_input_dims = 12;
+		const uint32_t n_input_dims = 6;
 		const uint32_t n_texture_dims = 2;
 		const uint32_t n_output_dims = 3;
-		const uint32_t batch_size = 1 << 12;
+		// const uint32_t batch_size = 1 << 12;
+		const uint32_t batch_size = 1 << 19; // 1024 * 512
 		const uint32_t n_frames = frame_folders.size();
 
 		const uint32_t log_interval = 100;
