@@ -72,10 +72,10 @@ TrainingMetadata load_metadata(filesystem::path& folder_path) {
 		std::string buffer_name = path.str().substr(thirdLastDot + 1, secondLastDot - thirdLastDot - 1);
 
 		if (buffer_name == "probePoses") {
-			cudaMemcpy(result.posW.data(), load_image(path, width, height).data(), img_size, cudaMemcpyDeviceToDevice);
+			cudaMemcpy(result.hitPosW.data(), load_image(path, width, height).data(), img_size, cudaMemcpyDeviceToDevice);
 		}
 		if (buffer_name == "rayDirs") {
-			cudaMemcpy(result.normalW.data(), load_image(path, width, height).data(), img_size, cudaMemcpyDeviceToDevice);
+			cudaMemcpy(result.rayDirW.data(), load_image(path, width, height).data(), img_size, cudaMemcpyDeviceToDevice);
 		}
 		if (buffer_name == "color") {
 			cudaMemcpy(result.color.data(), load_image(path, width, height).data(), img_size, cudaMemcpyDeviceToDevice);
